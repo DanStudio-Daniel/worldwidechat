@@ -20,12 +20,10 @@ app.get("/", (req, res) => {
 const PAGE_ACCESS_TOKEN = "EAAW7bgNPIuABRSRfRa1O33UZAR8GAq7QV26jBrsVlvPz7PXqh9QbSvKDsz9GxrsIrpImMzpwGLGy8jyraQABZBFVOuWtxKvlOZBeXZBW7oStGpAGXYcVqIrbZBrB8wG6ZBMwsvMUYf725t09lcziBuP6ppcpMx2daO48n5JPVSs5OvTSJN4gffKoo3ZA2dM8l93v6RppwZDZD";
 const VERIFY_TOKEN = "key";
 
-// MongoDB Connection
+// MongoDB Connection - FIXED: Removed deprecated options
 const mongoURI = "mongodb+srv://danielmojar84_db_user:nDG9hpTU0uHZtxYO@cluster0.wsk0egt.mongodb.net/?appName=Cluster0";
 mongoose.connect(mongoURI, {
-    dbName: "strangerchat",
-    useNewUrlParser: true,
-    useUnifiedTopology: true
+    dbName: "strangerchat"
 }).then(() => console.log("MongoDB Connected ✅"))
   .catch(err => console.log("DB Connection Error:", err));
 
@@ -200,4 +198,3 @@ async function broadcastSystem(text) {
 // ==========================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT} 🚀`));
-            
