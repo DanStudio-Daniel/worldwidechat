@@ -37,23 +37,22 @@ const userSchema = new mongoose.Schema({
 const User = mongoose.model("globalusers", userSchema);
 
 // ==========================================
-// FONT CONVERTER - BOLD SERIF
+// FIXED FONT CONVERTER
 // ==========================================
 function toBoldFont(text) {
     const normal = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    const bold   = "𝐀𝐁𝐂𝐃𝐄𝐅𝐆𝐇𝐈𝐉𝐊𝐋𝐌𝐍𝐎𝐏𝐐𝐑𝐒𝐓𝐔𝐕𝐖𝐗𝐘𝐙𝐚𝐛𝐜𝐝𝐞𝐟𝐠𝐡𝐢𝐣𝐤𝐥𝐦𝐧𝐨𝐩𝐪𝐫𝐬𝐭𝐮𝐯𝐰𝐱𝐲𝐳𝟎𝟏𝟐𝟑𝟒𝟓𝟔𝟕𝟖𝟗";
+    // We use an array of characters to prevent indexing issues with high-surrogate pairs
+    const bold = [
+        "𝐀","𝐁","𝐂","𝐃","𝐄","𝐅","𝐆","𝐇","𝐈","𝐉","𝐊","𝐋","𝐌","𝐍","𝐎","𝐏","𝐐","𝐑","𝐒","𝐓","𝐔","𝐕","𝐖","𝐗","𝐘","𝐙",
+        "𝐚","𝐛","𝐜","𝐝","𝐞","𝐟","𝐠","𝐡","𝐢","𝐣","𝐤","𝐥","𝐦","𝐧","𝐨","𝐩","𝐪","𝐫","𝐬","𝐭","𝐮","𝐯","𝐰","𝐱","𝐲","𝐳",
+        "𝟎","𝟏","𝟐","𝟑","𝟒","𝟓","𝟔","𝟕","𝟖","𝟗"
+    ];
     
-    let result = "";
-    for (let i = 0; i < text.length; i++) {
-        let char = text[i];
-        let index = normal.indexOf(char);
-        if (index !== -1) {
-            result += bold[index];
-        } else {
-            result += char;
-        }
-    }
-    return result;
+    // Array.from(text) correctly handles multi-byte emoji/special characters
+    return Array.from(text).map(char => {
+        const index = normal.indexOf(char);
+        return index !== -1 ? bold[index] : char;
+    }).join("");
 }
 
 // ==========================================
@@ -76,11 +75,11 @@ app.post("/webhook", (req, res) => {
 
     if (body.object === "page") {
         body.entry.forEach(entry => {
+            if (!entry.messaging) return;
             const webhookEvent = entry.messaging[0];
             const senderId = webhookEvent.sender.id;
             const messageText = webhookEvent.message?.text;
             
-            // DETECT REPLY
             let repliedToId = null;
             if (webhookEvent.message && webhookEvent.message.reply_to) {
                 repliedToId = webhookEvent.message.reply_to.sender_id;
@@ -172,7 +171,7 @@ async function handleMessage(senderId, text, repliedToId) {
         
         await User.updateOne({ senderId }, { active: true });
         
-        broadcastSystem(toBoldFont(user.name) + " joined the chat.");
+        broadcastSystem(toBoldFont(user.name) + " joined the chat. ✅");
         sendMessage(senderId, "📥 𝐉𝐨𝐢𝐧𝐞𝐝 𝐬𝐮𝐜𝐜𝐞𝐬𝐬𝐟𝐮𝐥𝐥𝐲!\n𝐘𝐨𝐮 𝐜𝐚𝐧 𝐧𝐨𝐰 𝐭𝐚𝐥𝐤 𝐭𝐨 𝐬𝐭𝐫𝐚𝐧𝐠𝐞𝐫𝐬 𝐰𝐨𝐫𝐥𝐝𝐰𝐢𝐝𝐞.");
         return;
     }
@@ -183,27 +182,23 @@ async function handleMessage(senderId, text, repliedToId) {
         
         await User.updateOne({ senderId }, { active: false });
         
-        broadcastSystem(toBoldFont(user.name) + " left the chat.");
+        broadcastSystem(toBoldFont(user.name) + " left the chat. ❌");
         sendMessage(senderId, "📤 𝐋𝐞𝐟𝐭 𝐭𝐡𝐞 𝐜𝐡𝐚𝐭.\n𝐓𝐲𝐩𝐞 '𝐣𝐨𝐢𝐧' 𝐚𝐧𝐲𝐭𝐢𝐦𝐞 𝐭𝐨 𝐜𝐨𝐦𝐞 𝐛𝐚𝐜𝐤.");
         return;
     }
 
     // 5. SEND MESSAGE TO GLOBAL CHAT
     if (user.active) {
-        // CHECK IF REPLYING
         if (repliedToId) {
             const repliedUser = await User.findOne({ senderId: repliedToId });
             if (repliedUser) {
-                // FORMAT: User1 replied to User2
                 const output = `${toBoldFont(user.name)} replied to ${toBoldFont(repliedUser.name)}\n${text}`;
-                // SEND TO EVERYONE EXCEPT ME
                 const activeUsers = await User.find({ active: true, senderId: { $ne: senderId } });
                 activeUsers.forEach(u => {
                     sendMessage(u.senderId, output);
                 });
             }
         } else {
-            // NORMAL MESSAGE
             const output = `${toBoldFont(user.name)}\n${text}`;
             const activeUsers = await User.find({ active: true, senderId: { $ne: senderId } });
             activeUsers.forEach(u => {
@@ -219,8 +214,8 @@ async function handleMessage(senderId, text, repliedToId) {
 // HELPER FUNCTIONS
 // ==========================================
 
-// Send message to one person
 function sendMessage(senderId, text) {
+    if (!text) return;
     text = text.replace(/\\n/g, '\n');
 
     const messageData = {
@@ -238,7 +233,6 @@ function sendMessage(senderId, text) {
     });
 }
 
-// Broadcast system notification
 async function broadcastSystem(text) {
     const activeUsers = await User.find({ active: true });
     activeUsers.forEach(user => {
