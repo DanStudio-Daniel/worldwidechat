@@ -65,7 +65,6 @@ app.post("/webhook", (req, res) => {
             const webhookEvent = entry.messaging[0];
             const senderId = webhookEvent.sender.id;
             
-            // AUTO SEEN
             sendReadReceipt(senderId);
 
             const messageText = webhookEvent.message?.text;
@@ -89,11 +88,14 @@ app.post("/webhook", (req, res) => {
 // ==========================================
 async function handleMessage(senderId, text, replyToMid) {
     const lowerText = text.toLowerCase().trim();
+    // Regex: Only allows A-Z, a-z, and 0-9
+    const alphaNumeric = /^[a-zA-Z0-9]+$/;
 
     // 1. REGISTER COMMAND
-    if (lowerText.startsWith("/register ")) {
+    if (lowerText.startsWith("/register")) {
         const name = text.slice(10).trim();
-        if (name.includes(" ")) return sendMessage(senderId, "❌ 𝐄𝐫𝐫𝐨𝐫!\nSpace is not allowed in name!");
+        if (!name) return sendMessage(senderId, "⚠️ 𝐏𝐥𝐞𝐚𝐬𝐞 𝐞𝐧𝐭𝐞𝐫 𝐚 𝐧𝐚𝐦𝐞!\nExample: /register Azuki");
+        if (!alphaNumeric.test(name)) return sendMessage(senderId, "❌ 𝐒𝐲𝐦𝐛𝐨𝐥𝐬 𝐧𝐨𝐭 𝐚𝐥𝐥𝐨𝐰𝐞𝐝!\nUse only letters and numbers.");
         if (name.length < 2 || name.length > 10) return sendMessage(senderId, "❌ 𝐈𝐧𝐯𝐚𝐥𝐢𝐝 𝐍𝐚𝐦𝐞!\nUse 2-10 characters only.");
 
         try {
@@ -112,7 +114,24 @@ async function handleMessage(senderId, text, replyToMid) {
     const user = await User.findOne({ senderId });
     if (!user) return sendMessage(senderId, "👋 𝐇𝐞𝐥𝐥𝐨! 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 𝐭𝐨 𝐆𝐥𝐨𝐛𝐚𝐥 𝐂𝐡𝐚𝐭!\n\n📝 𝐓𝐲𝐩𝐞: /register YourName");
 
-    // 2. JOIN COMMAND
+    // 2. CHANGE NAME COMMAND
+    if (lowerText.startsWith("/changename")) {
+        const newName = text.slice(12).trim();
+        if (!newName) return sendMessage(senderId, "⚠️ 𝐏𝐥𝐞𝐚𝐬𝐞 𝐞𝐧𝐭𝐞𝐫 𝐲𝐨𝐮𝐫 𝐧𝐞𝐰 𝐮𝐬𝐞𝐫𝐧𝐚𝐦𝐞!\nExample: /changename NewName");
+        if (!alphaNumeric.test(newName)) return sendMessage(senderId, "❌ 𝐒𝐲𝐦𝐛𝐨𝐥𝐬 𝐧𝐨𝐭 𝐚𝐥𝐥𝐨𝐰𝐞𝐝!\nUse only letters and numbers.");
+        if (newName.length < 2 || newName.length > 10) return sendMessage(senderId, "❌ 𝐈𝐧𝐯𝐚𝐥𝐢𝐝 𝐍𝐚𝐦𝐞!\nUse 2-10 characters only.");
+
+        try {
+            const nameTaken = await User.findOne({ name: newName });
+            if (nameTaken) return sendMessage(senderId, "❌ 𝐒𝐨𝐫𝐫𝐲!\nName " + toBoldFont(newName) + " is already taken.");
+
+            await User.updateOne({ senderId }, { name: newName });
+            sendMessage(senderId, "✅ 𝐍𝐚𝐦𝐞 𝐮𝐩𝐝𝐚𝐭𝐞𝐝 𝐭𝐨\n" + toBoldFont(newName));
+        } catch (err) { sendMessage(senderId, "❌ Error changing name."); }
+        return;
+    }
+
+    // 3. JOIN COMMAND
     if (lowerText === "join") {
         if (user.active) return sendMessage(senderId, "ℹ️ 𝐘𝐨𝐮 𝐚𝐫𝐞 𝐚𝐥𝐫𝐞𝐚𝐝𝐲 𝐢𝐧 𝐭𝐡𝐞 𝐜𝐡𝐚𝐭!");
         await User.updateOne({ senderId }, { active: true });
@@ -120,7 +139,7 @@ async function handleMessage(senderId, text, replyToMid) {
         return broadcastSystem(toBoldFont(user.name) + " joined the chat. ✅");
     }
 
-    // 3. LEAVE COMMAND
+    // 4. LEAVE COMMAND
     if (lowerText === "leave") {
         if (!user.active) return sendMessage(senderId, "ℹ️ 𝐘𝐨𝐮 𝐚𝐫𝐞 𝐧𝐨𝐭 𝐢𝐧 𝐭𝐡𝐞 𝐜𝐡𝐚𝐭.");
         await User.updateOne({ senderId }, { active: false });
@@ -128,7 +147,7 @@ async function handleMessage(senderId, text, replyToMid) {
         return broadcastSystem(toBoldFont(user.name) + " left the chat. ❌");
     }
 
-    // 4. GLOBAL CHAT
+    // 5. GLOBAL CHAT
     if (user.active) {
         let header = toBoldFont(user.name);
         if (replyToMid) {
