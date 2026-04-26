@@ -8,47 +8,40 @@ app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
 // ==========================================
-// HOMEPAGE
-// ==========================================
-app.get("/", (req, res) => {
-    res.send("<h1>Test Bot is Running ✅</h1>");
-});
-
-// ==========================================
 // CONFIGURATION
 // ==========================================
 const PAGE_ACCESS_TOKEN = "EAAW7bgNPIuABRSRfRa1O33UZAR8GAq7QV26jBrsVlvPz7PXqh9QbSvKDsz9GxrsIrpImMzpwGLGy8jyraQABZBFVOuWtxKvlOZBeXZBW7oStGpAGXYcVqIrbZBrB8wG6ZBMwsvMUYf725t09lcziBuP6ppcpMx2daO48n5JPVSs5OvTSJN4gffKoo3ZA2dM8l93v6RppwZDZD";
 const VERIFY_TOKEN = "key";
 
-// MongoDB Connection
 const mongoURI = "mongodb+srv://danielmojar84_db_user:nDG9hpTU0uHZtxYO@cluster0.wsk0egt.mongodb.net/?appName=Cluster0";
-mongoose.connect(mongoURI, {
-    dbName: "strangerchat"
-}).then(() => console.log("MongoDB Connected ✅"))
+mongoose.connect(mongoURI, { dbName: "strangerchat" })
+  .then(() => console.log("MongoDB Connected ✅"))
   .catch(err => console.log("DB Connection Error:", err));
 
-// User Schema & Model
+// ==========================================
+// SCHEMAS
+// ==========================================
 const userSchema = new mongoose.Schema({
     senderId: { type: String, required: true, unique: true },
     name: { type: String, required: true },
     active: { type: Boolean, default: false }
 });
-
 const User = mongoose.model("globalusers", userSchema);
 
+// New Schema to track Message IDs
+const messageSchema = new mongoose.Schema({
+    mid: { type: String, required: true, unique: true },
+    senderName: { type: String, required: true },
+    createdAt: { type: Date, expires: 86400, default: Date.now } // Auto-delete after 24h
+});
+const MessageLog = mongoose.model("messagelogs", messageSchema);
+
 // ==========================================
-// FIXED FONT CONVERTER
+// FONT CONVERTER
 // ==========================================
 function toBoldFont(text) {
     const normal = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    // We use an array of characters to prevent indexing issues with high-surrogate pairs
-    const bold = [
-        "𝐀","𝐁","𝐂","𝐃","𝐄","𝐅","𝐆","𝐇","𝐈","𝐉","𝐊","𝐋","𝐌","𝐍","𝐎","𝐏","𝐐","𝐑","𝐒","𝐓","𝐔","𝐕","𝐖","𝐗","𝐘","𝐙",
-        "𝐚","𝐛","𝐜","𝐝","𝐞","𝐟","𝐠","𝐡","𝐢","𝐣","𝐤","𝐥","𝐦","𝐧","𝐨","𝐩","𝐪","𝐫","𝐬","𝐭","𝐮","𝐯","𝐰","𝐱","𝐲","𝐳",
-        "𝟎","𝟏","𝟐","𝟑","𝟒","𝟓","𝟔","𝟕","𝟖","𝟗"
-    ];
-    
-    // Array.from(text) correctly handles multi-byte emoji/special characters
+    const bold = ["𝐀","𝐁","𝐂","𝐃","𝐄","𝐅","𝐆","𝐇","𝐈","𝐉","𝐊","𝐋","𝐌","𝐍","𝐎","𝐏","𝐐","𝐑","𝐒","𝐓","𝐔","𝐕","𝐖","𝐗","𝐘","𝐙","𝐚","𝐛","𝐜","𝐝","𝐞","𝐟","𝐠","𝐡","𝐢","𝐣","𝐤","𝐥","𝐦","𝐧","𝐨","𝐩","𝐪","𝐫","𝐬","𝐭","𝐮","𝐯","𝐰","𝐱","𝐲","𝐳","𝟎","𝟏","𝟐","𝟑","𝟒","𝟓","𝟔","𝟕","𝟖","𝟗"];
     return Array.from(text).map(char => {
         const index = normal.indexOf(char);
         return index !== -1 ? bold[index] : char;
@@ -56,15 +49,11 @@ function toBoldFont(text) {
 }
 
 // ==========================================
-// FACEBOOK WEBHOOK
+// WEBHOOKS
 // ==========================================
 app.get("/webhook", (req, res) => {
-    const mode = req.query["hub.mode"];
-    const token = req.query["hub.verify_token"];
-    const challenge = req.query["hub.challenge"];
-
-    if (mode && token === VERIFY_TOKEN) {
-        res.status(200).send(challenge);
+    if (req.query["hub.mode"] && req.query["hub.verify_token"] === VERIFY_TOKEN) {
+        res.status(200).send(req.query["hub.challenge"]);
     } else {
         res.sendStatus(403);
     }
@@ -72,21 +61,20 @@ app.get("/webhook", (req, res) => {
 
 app.post("/webhook", (req, res) => {
     const body = req.body;
-
     if (body.object === "page") {
         body.entry.forEach(entry => {
-            if (!entry.messaging) return;
             const webhookEvent = entry.messaging[0];
             const senderId = webhookEvent.sender.id;
             const messageText = webhookEvent.message?.text;
             
-            let repliedToId = null;
+            // Detect the Message ID being replied to
+            let replyToMid = null;
             if (webhookEvent.message && webhookEvent.message.reply_to) {
-                repliedToId = webhookEvent.message.reply_to.sender_id;
+                replyToMid = webhookEvent.message.reply_to.mid;
             }
 
             if (messageText) {
-                handleMessage(senderId, messageText, repliedToId);
+                handleMessage(senderId, messageText, replyToMid);
             }
         });
         res.status(200).send("EVENT_RECEIVED");
@@ -98,150 +86,96 @@ app.post("/webhook", (req, res) => {
 // ==========================================
 // MAIN LOGIC
 // ==========================================
-async function handleMessage(senderId, text, repliedToId) {
+async function handleMessage(senderId, text, replyToMid) {
     const lowerText = text.toLowerCase().trim();
+    const user = await User.findOne({ senderId });
 
-    // 1. REGISTER COMMAND
+    // Registration Logic
     if (lowerText.startsWith("/register ")) {
         const name = text.slice(10).trim();
-        
-        if (name.includes(" ")) {
-            return sendMessage(senderId, "❌ 𝐄𝐫𝐫𝐨𝐫!\nSpace is not allowed in name!\nUse: /register YourName");
+        if (name.includes(" ") || name.length < 2 || name.length > 10) {
+            return sendMessage(senderId, "❌ 𝐈𝐧𝐯𝐚𝐥𝐢𝐝! Use 2-10 chars, no spaces.");
         }
-        
-        if (name.length < 2 || name.length > 10) {
-            return sendMessage(senderId, "❌ 𝐈𝐧𝐯𝐚𝐥𝐢𝐝 𝐍𝐚𝐦𝐞!\nUse 2-10 characters only.");
-        }
-
         try {
-            const existingUser = await User.findOne({ senderId });
-            if (existingUser) {
-                return sendMessage(senderId, "✅ 𝐘𝐨𝐮 𝐚𝐫𝐞 𝐚𝐥𝐫𝐞𝐚𝐝𝐲 𝐫𝐞𝐠𝐢𝐬𝐭𝐞𝐫𝐞𝐝 𝐚𝐬\n" + toBoldFont(existingUser.name));
-            }
-
-            const nameTaken = await User.findOne({ name: name });
-            if (nameTaken) {
-                return sendMessage(senderId, "❌ 𝐒𝐨𝐫𝐫𝐲!\nName " + toBoldFont(name) + " is already taken.");
-            }
-
-            const newUser = new User({ senderId, name });
-            await newUser.save();
-            
-            sendMessage(senderId, "╔══════════════════╗\n    🎉 𝐖𝐄𝐋𝐂𝐎𝐌𝐄 🎉\n╚══════════════════╝\n\n𝐇𝐞𝐥𝐥𝐨 " + toBoldFont(name) + "!\n\n📌 𝐂𝐨𝐦𝐦𝐚𝐧𝐝𝐬:\n✏️ /changename <name>\n📥 join\n📤 leave\n\n✅ 𝐘𝐨𝐮 𝐜𝐚𝐧 𝐜𝐡𝐚𝐧𝐠𝐞 𝐧𝐚𝐦𝐞 𝐚𝐧𝐲𝐭𝐢𝐦𝐞!\n\n𝐓𝐲𝐩𝐞 '𝐣𝐨𝐢𝐧' 𝐭𝐨 𝐞𝐧𝐭𝐞𝐫 𝐜𝐡𝐚𝐭.");
-        } catch (err) {
-            sendMessage(senderId, "❌ Error registering user.");
-        }
+            if (user) return sendMessage(senderId, "✅ Registered as: " + toBoldFont(user.name));
+            const nameTaken = await User.findOne({ name });
+            if (nameTaken) return sendMessage(senderId, "❌ Name taken.");
+            await new User({ senderId, name }).save();
+            sendMessage(senderId, "🎉 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 " + toBoldFont(name) + "!\nType 'join' to start.");
+        } catch (e) { sendMessage(senderId, "❌ Error."); }
         return;
     }
 
-    const user = await User.findOne({ senderId });
-    if (!user) {
-        return sendMessage(senderId, "👋 𝐇𝐞𝐥𝐥𝐨! 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 𝐭𝐨 𝐆𝐥𝐨𝐛𝐚𝐥 𝐂𝐡𝐚𝐭!\n\n⚠️ 𝐍𝐎𝐓𝐄: Space NOT allowed in name!\n📝 𝐓𝐲𝐩𝐞: /register YourName\n\nExample: /register Azuki");
-    }
+    if (!user) return sendMessage(senderId, "👋 Type /register YourName");
 
-    // 2. CHANGE NAME COMMAND
-    if (lowerText.startsWith("/changename ")) {
-        const newName = text.slice(12).trim();
-        
-        if (newName.includes(" ")) {
-            return sendMessage(senderId, "❌ 𝐄𝐫𝐫𝐨𝐫!\nSpace is not allowed in name!");
-        }
-        
-        if (newName.length < 2 || newName.length > 10) {
-            return sendMessage(senderId, "❌ 𝐈𝐧𝐯𝐚𝐥𝐢𝐝 𝐍𝐚𝐦𝐞!\nUse 2-10 characters only.");
-        }
-
-        try {
-            const nameTaken = await User.findOne({ name: newName });
-            if (nameTaken) {
-                return sendMessage(senderId, "❌ 𝐒𝐨𝐫𝐫𝐲!\nName " + toBoldFont(newName) + " is already taken.");
-            }
-
-            await User.updateOne({ senderId }, { name: newName });
-            sendMessage(senderId, "✅ 𝐍𝐚𝐦𝐞 𝐮𝐩𝐝𝐚𝐭𝐞𝐝 𝐭𝐨\n" + toBoldFont(newName));
-        } catch (err) {
-            sendMessage(senderId, "❌ Error changing name.");
-        }
-        return;
-    }
-
-    // 3. JOIN COMMAND
+    // Join/Leave Logic
     if (lowerText === "join") {
-        if (user.active) return sendMessage(senderId, "ℹ️ 𝐘𝐨𝐮 𝐚𝐫𝐞 𝐚𝐥𝐫𝐞𝐚𝐝𝐲 𝐢𝐧 𝐭𝐡𝐞 𝐜𝐡𝐚𝐭!");
-        
         await User.updateOne({ senderId }, { active: true });
-        
-        broadcastSystem(toBoldFont(user.name) + " joined the chat. ✅");
-        sendMessage(senderId, "📥 𝐉𝐨𝐢𝐧𝐞𝐝 𝐬𝐮𝐜𝐜𝐞𝐬𝐬𝐟𝐮𝐥𝐥𝐲!\n𝐘𝐨𝐮 𝐜𝐚𝐧 𝐧𝐨𝐰 𝐭𝐚𝐥𝐤 𝐭𝐨 𝐬𝐭𝐫𝐚𝐧𝐠𝐞𝐫𝐬 𝐰𝐨𝐫𝐥𝐝𝐰𝐢𝐝𝐞.");
-        return;
+        return broadcastSystem(toBoldFont(user.name) + " joined! ✅");
     }
-
-    // 4. LEAVE COMMAND
     if (lowerText === "leave") {
-        if (!user.active) return sendMessage(senderId, "ℹ️ 𝐘𝐨𝐮 𝐚𝐫𝐞 𝐧𝐨𝐭 𝐢𝐧 𝐭𝐡𝐞 𝐜𝐡𝐚𝐭.");
-        
         await User.updateOne({ senderId }, { active: false });
-        
-        broadcastSystem(toBoldFont(user.name) + " left the chat. ❌");
-        sendMessage(senderId, "📤 𝐋𝐞𝐟𝐭 𝐭𝐡𝐞 𝐜𝐡𝐚𝐭.\n𝐓𝐲𝐩𝐞 '𝐣𝐨𝐢𝐧' 𝐚𝐧𝐲𝐭𝐢𝐦𝐞 𝐭𝐨 𝐜𝐨𝐦𝐞 𝐛𝐚𝐜𝐤.");
-        return;
+        return broadcastSystem(toBoldFont(user.name) + " left! ❌");
     }
 
-    // 5. SEND MESSAGE TO GLOBAL CHAT
+    // Chat Logic
     if (user.active) {
-        if (repliedToId) {
-            const repliedUser = await User.findOne({ senderId: repliedToId });
-            if (repliedUser) {
-                const output = `${toBoldFont(user.name)} replied to ${toBoldFont(repliedUser.name)}\n${text}`;
-                const activeUsers = await User.find({ active: true, senderId: { $ne: senderId } });
-                activeUsers.forEach(u => {
-                    sendMessage(u.senderId, output);
-                });
+        let header = toBoldFont(user.name);
+        
+        if (replyToMid) {
+            const originalMsg = await MessageLog.findOne({ mid: replyToMid });
+            if (originalMsg) {
+                header = `${toBoldFont(user.name)} 𝐫𝐞𝐩𝐥𝐢𝐞𝐝 𝐭𝐨 ${toBoldFont(originalMsg.senderName)}`;
+            } else {
+                header = `${toBoldFont(user.name)} 𝐫𝐞𝐩𝐥𝐢𝐞𝐝 𝐭𝐨 𝐒𝐲𝐬𝐭𝐞𝐦`;
             }
-        } else {
-            const output = `${toBoldFont(user.name)}\n${text}`;
-            const activeUsers = await User.find({ active: true, senderId: { $ne: senderId } });
-            activeUsers.forEach(u => {
-                sendMessage(u.senderId, output);
-            });
         }
+
+        const output = `${header}\n${text}`;
+        const activeUsers = await User.find({ active: true, senderId: { $ne: senderId } });
+        
+        activeUsers.forEach(u => {
+            sendAndLogMessage(u.senderId, output, user.name);
+        });
     } else {
-        sendMessage(senderId, "🔒 𝐘𝐨𝐮 𝐚𝐫𝐞 𝐧𝐨𝐭 𝐢𝐧 𝐭𝐡𝐞 𝐜𝐡𝐚𝐭.\n𝐓𝐲𝐩𝐞 '𝐣𝐨𝐢𝐧' 𝐭𝐨 𝐩𝐚𝐫𝐭𝐢𝐜𝐢𝐩𝐚𝐭𝐞.");
+        sendMessage(senderId, "🔒 Type 'join' to chat.");
     }
 }
 
 // ==========================================
-// HELPER FUNCTIONS
+// HELPERS
 // ==========================================
 
-function sendMessage(senderId, text) {
-    if (!text) return;
-    text = text.replace(/\\n/g, '\n');
-
-    const messageData = {
-        recipient: { id: senderId },
-        message: { text: text }
-    };
-
+// Sends message AND saves the MID so people can reply to it
+function sendAndLogMessage(recipientId, text, senderNameForLog) {
     request({
         uri: "https://graph.facebook.com/v18.0/me/messages",
         qs: { access_token: PAGE_ACCESS_TOKEN },
         method: "POST",
-        json: messageData
-    }, (error, res, body) => {
-        if (error) console.error("Send Error:", error);
+        json: { recipient: { id: recipientId }, message: { text: text } }
+    }, async (error, res, body) => {
+        if (!error && body.message_id) {
+            // Save this message ID so we know who sent it if someone replies
+            await new MessageLog({ 
+                mid: body.message_id, 
+                senderName: senderNameForLog 
+            }).save();
+        }
+    });
+}
+
+function sendMessage(senderId, text) {
+    request({
+        uri: "https://graph.facebook.com/v18.0/me/messages",
+        qs: { access_token: PAGE_ACCESS_TOKEN },
+        method: "POST",
+        json: { recipient: { id: senderId }, message: { text: text } }
     });
 }
 
 async function broadcastSystem(text) {
     const activeUsers = await User.find({ active: true });
-    activeUsers.forEach(user => {
-        sendMessage(user.senderId, text);
-    });
+    activeUsers.forEach(u => sendMessage(u.senderId, text));
 }
 
-// ==========================================
-// START SERVER
-// ==========================================
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT} 🚀`));
+app.listen(process.env.PORT || 3000, () => console.log("Running... 🚀"));
