@@ -79,9 +79,15 @@ app.post("/webhook", (req, res) => {
             const webhookEvent = entry.messaging[0];
             const senderId = webhookEvent.sender.id;
             const messageText = webhookEvent.message?.text;
+            
+            // DETECT REPLY
+            let repliedToId = null;
+            if (webhookEvent.message && webhookEvent.message.reply_to) {
+                repliedToId = webhookEvent.message.reply_to.sender_id;
+            }
 
             if (messageText) {
-                handleMessage(senderId, messageText);
+                handleMessage(senderId, messageText, repliedToId);
             }
         });
         res.status(200).send("EVENT_RECEIVED");
@@ -93,14 +99,13 @@ app.post("/webhook", (req, res) => {
 // ==========================================
 // MAIN LOGIC
 // ==========================================
-async function handleMessage(senderId, text) {
+async function handleMessage(senderId, text, repliedToId) {
     const lowerText = text.toLowerCase().trim();
 
     // 1. REGISTER COMMAND
     if (lowerText.startsWith("/register ")) {
         const name = text.slice(10).trim();
         
-        // CHECK FOR SPACES
         if (name.includes(" ")) {
             return sendMessage(senderId, "❌ 𝐄𝐫𝐫𝐨𝐫!\nSpace is not allowed in name!\nUse: /register YourName");
         }
@@ -115,7 +120,6 @@ async function handleMessage(senderId, text) {
                 return sendMessage(senderId, "✅ 𝐘𝐨𝐮 𝐚𝐫𝐞 𝐚𝐥𝐫𝐞𝐚𝐝𝐲 𝐫𝐞𝐠𝐢𝐬𝐭𝐞𝐫𝐞𝐝 𝐚𝐬\n" + toBoldFont(existingUser.name));
             }
 
-            // CHECK IF NAME ALREADY EXISTS
             const nameTaken = await User.findOne({ name: name });
             if (nameTaken) {
                 return sendMessage(senderId, "❌ 𝐒𝐨𝐫𝐫𝐲!\nName " + toBoldFont(name) + " is already taken.");
@@ -124,7 +128,6 @@ async function handleMessage(senderId, text) {
             const newUser = new User({ senderId, name });
             await newUser.save();
             
-            // STYLISH WELCOME MESSAGE
             sendMessage(senderId, "╔══════════════════╗\n    🎉 𝐖𝐄𝐋𝐂𝐎𝐌𝐄 🎉\n╚══════════════════╝\n\n𝐇𝐞𝐥𝐥𝐨 " + toBoldFont(name) + "!\n\n📌 𝐂𝐨𝐦𝐦𝐚𝐧𝐝𝐬:\n✏️ /changename <name>\n📥 join\n📤 leave\n\n✅ 𝐘𝐨𝐮 𝐜𝐚𝐧 𝐜𝐡𝐚𝐧𝐠𝐞 𝐧𝐚𝐦𝐞 𝐚𝐧𝐲𝐭𝐢𝐦𝐞!\n\n𝐓𝐲𝐩𝐞 '𝐣𝐨𝐢𝐧' 𝐭𝐨 𝐞𝐧𝐭𝐞𝐫 𝐜𝐡𝐚𝐭.");
         } catch (err) {
             sendMessage(senderId, "❌ Error registering user.");
@@ -132,10 +135,8 @@ async function handleMessage(senderId, text) {
         return;
     }
 
-    // Check if user exists
     const user = await User.findOne({ senderId });
     if (!user) {
-        // STYLISH FIRST TIME MESSAGE
         return sendMessage(senderId, "👋 𝐇𝐞𝐥𝐥𝐨! 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 𝐭𝐨 𝐆𝐥𝐨𝐛𝐚𝐥 𝐂𝐡𝐚𝐭!\n\n⚠️ 𝐍𝐎𝐓𝐄: Space NOT allowed in name!\n📝 𝐓𝐲𝐩𝐞: /register YourName\n\nExample: /register Azuki");
     }
 
@@ -143,7 +144,6 @@ async function handleMessage(senderId, text) {
     if (lowerText.startsWith("/changename ")) {
         const newName = text.slice(12).trim();
         
-        // CHECK FOR SPACES
         if (newName.includes(" ")) {
             return sendMessage(senderId, "❌ 𝐄𝐫𝐫𝐨𝐫!\nSpace is not allowed in name!");
         }
@@ -153,7 +153,6 @@ async function handleMessage(senderId, text) {
         }
 
         try {
-            // CHECK IF NAME ALREADY EXISTS
             const nameTaken = await User.findOne({ name: newName });
             if (nameTaken) {
                 return sendMessage(senderId, "❌ 𝐒𝐨𝐫𝐫𝐲!\nName " + toBoldFont(newName) + " is already taken.");
@@ -173,8 +172,7 @@ async function handleMessage(senderId, text) {
         
         await User.updateOne({ senderId }, { active: true });
         
-        // System notification to everyone
-        broadcastSystem(toBoldFont(user.name) + " joined the chat. ✅");
+        broadcastSystem(toBoldFont(user.name) + " joined the chat.");
         sendMessage(senderId, "📥 𝐉𝐨𝐢𝐧𝐞𝐝 𝐬𝐮𝐜𝐜𝐞𝐬𝐬𝐟𝐮𝐥𝐥𝐲!\n𝐘𝐨𝐮 𝐜𝐚𝐧 𝐧𝐨𝐰 𝐭𝐚𝐥𝐤 𝐭𝐨 𝐬𝐭𝐫𝐚𝐧𝐠𝐞𝐫𝐬 𝐰𝐨𝐫𝐥𝐝𝐰𝐢𝐝𝐞.");
         return;
     }
@@ -185,15 +183,33 @@ async function handleMessage(senderId, text) {
         
         await User.updateOne({ senderId }, { active: false });
         
-        // System notification to everyone
-        broadcastSystem(toBoldFont(user.name) + " left the chat. ❌");
+        broadcastSystem(toBoldFont(user.name) + " left the chat.");
         sendMessage(senderId, "📤 𝐋𝐞𝐟𝐭 𝐭𝐡𝐞 𝐜𝐡𝐚𝐭.\n𝐓𝐲𝐩𝐞 '𝐣𝐨𝐢𝐧' 𝐚𝐧𝐲𝐭𝐢𝐦𝐞 𝐭𝐨 𝐜𝐨𝐦𝐞 𝐛𝐚𝐜𝐤.");
         return;
     }
 
     // 5. SEND MESSAGE TO GLOBAL CHAT
     if (user.active) {
-        broadcastMessage(user.name, text);
+        // CHECK IF REPLYING
+        if (repliedToId) {
+            const repliedUser = await User.findOne({ senderId: repliedToId });
+            if (repliedUser) {
+                // FORMAT: User1 replied to User2
+                const output = `${toBoldFont(user.name)} replied to ${toBoldFont(repliedUser.name)}\n${text}`;
+                // SEND TO EVERYONE EXCEPT ME
+                const activeUsers = await User.find({ active: true, senderId: { $ne: senderId } });
+                activeUsers.forEach(u => {
+                    sendMessage(u.senderId, output);
+                });
+            }
+        } else {
+            // NORMAL MESSAGE
+            const output = `${toBoldFont(user.name)}\n${text}`;
+            const activeUsers = await User.find({ active: true, senderId: { $ne: senderId } });
+            activeUsers.forEach(u => {
+                sendMessage(u.senderId, output);
+            });
+        }
     } else {
         sendMessage(senderId, "🔒 𝐘𝐨𝐮 𝐚𝐫𝐞 𝐧𝐨𝐭 𝐢𝐧 𝐭𝐡𝐞 𝐜𝐡𝐚𝐭.\n𝐓𝐲𝐩𝐞 '𝐣𝐨𝐢𝐧' 𝐭𝐨 𝐩𝐚𝐫𝐭𝐢𝐜𝐢𝐩𝐚𝐭𝐞.");
     }
@@ -222,19 +238,7 @@ function sendMessage(senderId, text) {
     });
 }
 
-// Broadcast message to ALL active users
-async function broadcastMessage(senderName, message) {
-    const activeUsers = await User.find({ active: true });
-    
-    const formattedName = toBoldFont(senderName);
-    const output = `${formattedName}\n${message}`;
-    
-    activeUsers.forEach(user => {
-        sendMessage(user.senderId, output);
-    });
-}
-
-// Broadcast system notification (Join/Leave)
+// Broadcast system notification
 async function broadcastSystem(text) {
     const activeUsers = await User.find({ active: true });
     activeUsers.forEach(user => {
@@ -247,4 +251,3 @@ async function broadcastSystem(text) {
 // ==========================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT} 🚀`));
-        
