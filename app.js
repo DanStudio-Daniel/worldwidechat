@@ -8,6 +8,13 @@ app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
 // ==========================================
+// HOMEPAGE
+// ==========================================
+app.get("/", (req, res) => {
+    res.send("<h1>Test Bot is Running ✅</h1>");
+});
+
+// ==========================================
 // CONFIGURATION
 // ==========================================
 const PAGE_ACCESS_TOKEN = "EAAW7bgNPIuABRSRfRa1O33UZAR8GAq7QV26jBrsVlvPz7PXqh9QbSvKDsz9GxrsIrpImMzpwGLGy8jyraQABZBFVOuWtxKvlOZBeXZBW7oStGpAGXYcVqIrbZBrB8wG6ZBMwsvMUYf725t09lcziBuP6ppcpMx2daO48n5JPVSs5OvTSJN4gffKoo3ZA2dM8l93v6RppwZDZD";
@@ -32,7 +39,7 @@ const userSchema = new mongoose.Schema({
 const User = mongoose.model("globalusers", userSchema);
 
 // ==========================================
-// FONT CONVERTER (𝐁𝐎𝐋𝐃 𝐌𝐎𝐍𝐎𝐒𝐏𝐀𝐂𝐄)
+// FONT CONVERTER
 // ==========================================
 function toBoldFont(text) {
     const normal = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -172,7 +179,6 @@ function sendMessage(senderId, text) {
 async function broadcastMessage(senderName, message) {
     const activeUsers = await User.find({ active: true });
     
-    // ✅ ACTUAL FONT CHANGE HERE
     const formattedName = toBoldFont(senderName);
     const output = `${formattedName}\n${message}`;
     
@@ -194,3 +200,4 @@ async function broadcastSystem(text) {
 // ==========================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT} 🚀`));
+            
