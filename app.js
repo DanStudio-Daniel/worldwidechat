@@ -20,7 +20,7 @@ app.get("/", (req, res) => {
 const PAGE_ACCESS_TOKEN = "EAAW7bgNPIuABRSRfRa1O33UZAR8GAq7QV26jBrsVlvPz7PXqh9QbSvKDsz9GxrsIrpImMzpwGLGy8jyraQABZBFVOuWtxKvlOZBeXZBW7oStGpAGXYcVqIrbZBrB8wG6ZBMwsvMUYf725t09lcziBuP6ppcpMx2daO48n5JPVSs5OvTSJN4gffKoo3ZA2dM8l93v6RppwZDZD";
 const VERIFY_TOKEN = "key";
 
-// MongoDB Connection - FIXED: Removed deprecated options
+// MongoDB Connection
 const mongoURI = "mongodb+srv://danielmojar84_db_user:nDG9hpTU0uHZtxYO@cluster0.wsk0egt.mongodb.net/?appName=Cluster0";
 mongoose.connect(mongoURI, {
     dbName: "strangerchat"
@@ -37,16 +37,23 @@ const userSchema = new mongoose.Schema({
 const User = mongoose.model("globalusers", userSchema);
 
 // ==========================================
-// FONT CONVERTER
+// FONT CONVERTER - BOLD SERIF
 // ==========================================
 function toBoldFont(text) {
     const normal = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     const bold   = "𝐀𝐁𝐂𝐃𝐄𝐅𝐆𝐇𝐈𝐉𝐊𝐋𝐌𝐍𝐎𝐏𝐐𝐑𝐒𝐓𝐔𝐕𝐖𝐗𝐘𝐙𝐚𝐛𝐜𝐝𝐞𝐟𝐠𝐡𝐢𝐣𝐤𝐥𝐦𝐧𝐨𝐩𝐪𝐫𝐬𝐭𝐮𝐯𝐰𝐱𝐲𝐳𝟎𝟏𝟐𝟑𝟒𝟓𝟔𝟕𝟖𝟗";
     
-    return text.split('').map(char => {
-        const idx = normal.indexOf(char);
-        return (idx !== -1) ? bold[idx] : char;
-    }).join('');
+    let result = "";
+    for (let i = 0; i < text.length; i++) {
+        let char = text[i];
+        let index = normal.indexOf(char);
+        if (index !== -1) {
+            result += bold[index];
+        } else {
+            result += char;
+        }
+    }
+    return result;
 }
 
 // ==========================================
@@ -93,19 +100,32 @@ async function handleMessage(senderId, text) {
     if (lowerText.startsWith("/register ")) {
         const name = text.slice(10).trim();
         
+        // CHECK FOR SPACES
+        if (name.includes(" ")) {
+            return sendMessage(senderId, "❌ 𝐄𝐫𝐫𝐨𝐫!\nSpace is not allowed in name!\nUse: /register YourName");
+        }
+        
         if (name.length < 2 || name.length > 10) {
-            return sendMessage(senderId, "❌ Invalid name! Use 2-10 characters only.");
+            return sendMessage(senderId, "❌ 𝐈𝐧𝐯𝐚𝐥𝐢𝐝 𝐍𝐚𝐦𝐞!\nUse 2-10 characters only.");
         }
 
         try {
             const existingUser = await User.findOne({ senderId });
             if (existingUser) {
-                return sendMessage(senderId, "✅ You are already registered as " + toBoldFont(existingUser.name));
+                return sendMessage(senderId, "✅ 𝐘𝐨𝐮 𝐚𝐫𝐞 𝐚𝐥𝐫𝐞𝐚𝐝𝐲 𝐫𝐞𝐠𝐢𝐬𝐭𝐞𝐫𝐞𝐝 𝐚𝐬\n" + toBoldFont(existingUser.name));
+            }
+
+            // CHECK IF NAME ALREADY EXISTS
+            const nameTaken = await User.findOne({ name: name });
+            if (nameTaken) {
+                return sendMessage(senderId, "❌ 𝐒𝐨𝐫𝐫𝐲!\nName " + toBoldFont(name) + " is already taken.");
             }
 
             const newUser = new User({ senderId, name });
             await newUser.save();
-            sendMessage(senderId, "🎉 Registration Successful!\nHello " + toBoldFont(name) + "!\nType 'join' to enter the Global Chat.");
+            
+            // STYLISH WELCOME MESSAGE
+            sendMessage(senderId, "╔══════════════════╗\n    🎉 𝐖𝐄𝐋𝐂𝐎𝐌𝐄 🎉\n╚══════════════════╝\n\n𝐇𝐞𝐥𝐥𝐨 " + toBoldFont(name) + "!\n\n📌 𝐂𝐨𝐦𝐦𝐚𝐧𝐝𝐬:\n✏️ /changename <name>\n📥 join\n📤 leave\n\n✅ 𝐘𝐨𝐮 𝐜𝐚𝐧 𝐜𝐡𝐚𝐧𝐠𝐞 𝐧𝐚𝐦𝐞 𝐚𝐧𝐲𝐭𝐢𝐦𝐞!\n\n𝐓𝐲𝐩𝐞 '𝐣𝐨𝐢𝐧' 𝐭𝐨 𝐞𝐧𝐭𝐞𝐫 𝐜𝐡𝐚𝐭.");
         } catch (err) {
             sendMessage(senderId, "❌ Error registering user.");
         }
@@ -115,38 +135,67 @@ async function handleMessage(senderId, text) {
     // Check if user exists
     const user = await User.findOne({ senderId });
     if (!user) {
-        return sendMessage(senderId, "👋 Welcome!\nPlease register first:\nType /register <name>");
+        // STYLISH FIRST TIME MESSAGE
+        return sendMessage(senderId, "👋 𝐇𝐞𝐥𝐥𝐨! 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 𝐭𝐨 𝐆𝐥𝐨𝐛𝐚𝐥 𝐂𝐡𝐚𝐭!\n\n⚠️ 𝐍𝐎𝐓𝐄: Space NOT allowed in name!\n📝 𝐓𝐲𝐩𝐞: /register YourName\n\nExample: /register Azuki");
     }
 
-    // 2. JOIN COMMAND
+    // 2. CHANGE NAME COMMAND
+    if (lowerText.startsWith("/changename ")) {
+        const newName = text.slice(12).trim();
+        
+        // CHECK FOR SPACES
+        if (newName.includes(" ")) {
+            return sendMessage(senderId, "❌ 𝐄𝐫𝐫𝐨𝐫!\nSpace is not allowed in name!");
+        }
+        
+        if (newName.length < 2 || newName.length > 10) {
+            return sendMessage(senderId, "❌ 𝐈𝐧𝐯𝐚𝐥𝐢𝐝 𝐍𝐚𝐦𝐞!\nUse 2-10 characters only.");
+        }
+
+        try {
+            // CHECK IF NAME ALREADY EXISTS
+            const nameTaken = await User.findOne({ name: newName });
+            if (nameTaken) {
+                return sendMessage(senderId, "❌ 𝐒𝐨𝐫𝐫𝐲!\nName " + toBoldFont(newName) + " is already taken.");
+            }
+
+            await User.updateOne({ senderId }, { name: newName });
+            sendMessage(senderId, "✅ 𝐍𝐚𝐦𝐞 𝐮𝐩𝐝𝐚𝐭𝐞𝐝 𝐭𝐨\n" + toBoldFont(newName));
+        } catch (err) {
+            sendMessage(senderId, "❌ Error changing name.");
+        }
+        return;
+    }
+
+    // 3. JOIN COMMAND
     if (lowerText === "join") {
-        if (user.active) return sendMessage(senderId, "ℹ️ You are already in the chat!");
+        if (user.active) return sendMessage(senderId, "ℹ️ 𝐘𝐨𝐮 𝐚𝐫𝐞 𝐚𝐥𝐫𝐞𝐚𝐝𝐲 𝐢𝐧 𝐭𝐡𝐞 𝐜𝐡𝐚𝐭!");
         
         await User.updateOne({ senderId }, { active: true });
         
         // System notification to everyone
         broadcastSystem(toBoldFont(user.name) + " joined the chat. ✅");
-        sendMessage(senderId, "📥 You joined the Global Chat!\nYou can now talk to strangers worldwide.");
+        sendMessage(senderId, "📥 𝐉𝐨𝐢𝐧𝐞𝐝 𝐬𝐮𝐜𝐜𝐞𝐬𝐬𝐟𝐮𝐥𝐥𝐲!\n𝐘𝐨𝐮 𝐜𝐚𝐧 𝐧𝐨𝐰 𝐭𝐚𝐥𝐤 𝐭𝐨 𝐬𝐭𝐫𝐚𝐧𝐠𝐞𝐫𝐬 𝐰𝐨𝐫𝐥𝐝𝐰𝐢𝐝𝐞.");
         return;
     }
 
-    // 3. LEAVE COMMAND
+    // 4. LEAVE COMMAND
     if (lowerText === "leave") {
-        if (!user.active) return sendMessage(senderId, "ℹ️ You are not in the chat.");
+        if (!user.active) return sendMessage(senderId, "ℹ️ 𝐘𝐨𝐮 𝐚𝐫𝐞 𝐧𝐨𝐭 𝐢𝐧 𝐭𝐡𝐞 𝐜𝐡𝐚𝐭.");
         
         await User.updateOne({ senderId }, { active: false });
         
         // System notification to everyone
         broadcastSystem(toBoldFont(user.name) + " left the chat. ❌");
-        sendMessage(senderId, "📤 You left the chat.\nType 'join' anytime to come back.");
+        sendMessage(senderId, "📤 𝐋𝐞𝐟𝐭 𝐭𝐡𝐞 𝐜𝐡𝐚𝐭.\n𝐓𝐲𝐩𝐞 '𝐣𝐨𝐢𝐧' 𝐚𝐧𝐲𝐭𝐢𝐦𝐞 𝐭𝐨 𝐜𝐨𝐦𝐞 𝐛𝐚𝐜𝐤.");
         return;
     }
 
-    // 4. SEND MESSAGE TO GLOBAL CHAT
+    // 5. SEND MESSAGE TO GLOBAL CHAT
     if (user.active) {
         broadcastMessage(user.name, text);
     } else {
-        sendMessage(senderId, "🔒 You are not in the chat.\nType 'join' to participate.");
+        sendMessage(senderId, "🔒 𝐘𝐨𝐮 𝐚𝐫𝐞 𝐧𝐨𝐭 𝐢𝐧 𝐭𝐡𝐞 𝐜𝐡𝐚𝐭.\n𝐓𝐲𝐩𝐞 '𝐣𝐨𝐢𝐧' 𝐭𝐨 𝐩𝐚𝐫𝐭𝐢𝐜𝐢𝐩𝐚𝐭𝐞.");
     }
 }
 
@@ -198,3 +247,4 @@ async function broadcastSystem(text) {
 // ==========================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT} 🚀`));
+        
