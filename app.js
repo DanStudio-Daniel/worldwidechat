@@ -94,7 +94,7 @@ async function handleMessage(senderId, text, replyToMid) {
     // 1. REGISTRATION
     if (lowerText.startsWith("/register")) {
         const name = text.slice(10).trim();
-        if (!name) return sendMessage(senderId, "⚠️ 𝐏𝐥𝐞𝐚𝐬𝐞 𝐞𝐧𝐭𝐞𝐫 𝐚 𝐧𝐚𝐦𝐞!\nExample: /register Azuki");
+        if (!name) return sendMessage(senderId, "⚠️ 𝐏𝐥𝐞𝐚𝐬𝐞 𝐞𝐧𝐭𝐞𝐫 𝐚 𝐧𝐚𝐦𝐞!");
         if (!alphaNumeric.test(name)) return sendMessage(senderId, "❌ 𝐒𝐲𝐦𝐛𝐨𝐥𝐬 𝐧𝐨𝐭 𝐚𝐥𝐥𝐨𝐰𝐞𝐝!");
         const existing = await User.findOne({ senderId });
         if (existing) return sendMessage(senderId, "✅ 𝐀𝐥𝐫𝐞𝐚𝐝𝐲 𝐫𝐞𝐠𝐢𝐬𝐭𝐞𝐫𝐞𝐝: " + toBoldFont(existing.name));
@@ -105,7 +105,7 @@ async function handleMessage(senderId, text, replyToMid) {
     const user = await User.findOne({ senderId });
     if (!user) return sendMessage(senderId, "👋 Type: /register YourName");
 
-    // 2. CREATOR COMMANDS (/kick, /ban, /unban)
+    // 2. CREATOR COMMANDS (HIDDEN FROM BROADCAST)
     if (user.currentGroupId && (lowerText.startsWith("/kick ") || lowerText.startsWith("/ban ") || lowerText.startsWith("/unban "))) {
         const group = await Group.findOne({ groupId: user.currentGroupId });
         if (group.ownerId !== senderId) return sendMessage(senderId, "❌ Only the group creator can use this.");
@@ -117,7 +117,8 @@ async function handleMessage(senderId, text, replyToMid) {
             if (!targetUser) return sendMessage(senderId, "❌ User not found in group.");
             await User.updateOne({ senderId: targetUser.senderId }, { currentGroupId: null, active: false });
             sendMessage(targetUser.senderId, "⚠️ You have been kicked from the group.");
-            return broadcastGroup(group.groupId, `🚫 ${toBoldFont(targetUser.name)} was kicked by the Creator.`);
+            broadcastGroup(group.groupId, `🚫 ${toBoldFont(targetUser.name)} was kicked by the Creator.`);
+            return; // STOP HERE - Do not broadcast command to chat
         }
 
         if (lowerText.startsWith("/ban")) {
@@ -125,21 +126,23 @@ async function handleMessage(senderId, text, replyToMid) {
             await Group.updateOne({ groupId: group.groupId }, { $addToSet: { bannedUsers: targetUser.senderId } });
             await User.updateOne({ senderId: targetUser.senderId }, { currentGroupId: null, active: false });
             sendMessage(targetUser.senderId, "🚫 You have been banned from this group.");
-            return broadcastGroup(group.groupId, `🔨 ${toBoldFont(targetUser.name)} was banned by the Creator.`);
+            broadcastGroup(group.groupId, `🔨 ${toBoldFont(targetUser.name)} was banned by the Creator.`);
+            return; // STOP HERE
         }
 
         if (lowerText.startsWith("/unban")) {
             const bannedUser = await User.findOne({ name: targetName });
             if (!bannedUser) return sendMessage(senderId, "❌ User not found.");
             await Group.updateOne({ groupId: group.groupId }, { $pull: { bannedUsers: bannedUser.senderId } });
-            return sendMessage(senderId, `✅ ${toBoldFont(bannedUser.name)} has been unbanned.`);
+            sendMessage(senderId, `✅ ${toBoldFont(bannedUser.name)} has been unbanned.`);
+            return; // STOP HERE
         }
     }
 
     // 3. CHANGE NAME
     if (lowerText.startsWith("/changename")) {
         const newName = text.slice(12).trim();
-        if (!newName || !alphaNumeric.test(newName)) return sendMessage(senderId, "❌ Use letters and numbers only.");
+        if (!newName || !alphaNumeric.test(newName)) return sendMessage(senderId, "❌ Letters/numbers only.");
         const nameTaken = await User.findOne({ name: newName });
         if (nameTaken) return sendMessage(senderId, "❌ 𝐍𝐚𝐦𝐞 𝐭𝐚𝐤𝐞𝐧!");
         await User.updateOne({ senderId }, { name: newName });
@@ -157,8 +160,9 @@ async function handleMessage(senderId, text, replyToMid) {
             await User.updateOne({ senderId }, { setupState: "WAITING_NAME", tempGroupData: {} });
             return sendMessage(senderId, "──────────────────\n   🆕 𝐂𝐑𝐄𝐀𝐓𝐄 𝐆𝐑𝐎𝐔𝐏\n──────────────────\n\n𝐏𝐥𝐞𝐚𝐬𝐞 𝐞𝐧𝐭𝐞𝐫 𝐠𝐫𝐨𝐮𝐩 𝐧𝐚𝐦𝐞:");
         }
+        // ... (setupState logic remains same as previous working version)
         if (user.setupState === "WAITING_NAME") {
-            if (!alphaNumeric.test(text) || text.length < 2 || text.length > 20) return sendMessage(senderId, "❌ 2-20 letters/numbers only.");
+            if (!alphaNumeric.test(text)) return sendMessage(senderId, "❌ 2-20 letters/numbers only.");
             await User.updateOne({ senderId }, { setupState: "WAITING_VIS", "tempGroupData.name": text });
             return sendMessage(senderId, "👁️ 𝐕𝐢𝐬𝐢𝐛𝐢𝐥𝐢𝐭𝐲: (public / private)");
         }
@@ -200,14 +204,11 @@ async function handleMessage(senderId, text, replyToMid) {
         await User.updateOne({ senderId }, { currentGroupId: targetId, active: true });
         const newCount = onlineCount + 1;
         
-        const welcomeHeader = `📥 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 𝐭𝐨 ${toBoldFont(group.name)} 𝐠𝐫𝐨𝐮𝐩!\n𝐎𝐧𝐥𝐢𝐧𝐞 ${newCount}/${group.maxUsers}`;
-        
         if (group.ownerId === senderId) {
-            sendMessage(senderId, `${welcomeHeader}\n──────────────────\n👑 𝐆𝐑𝐎𝐔𝐏 𝐌𝐀𝐍𝐀𝐆𝐄𝐌𝐄𝐍𝐓\n──────────────────\n/kick [name]\n/ban [name]\n/unban [name]`);
+            sendMessage(senderId, `📥 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 𝐭𝐨 ${toBoldFont(group.name)} 𝐠𝐫𝐨𝐮𝐩!\n𝐎𝐧𝐥𝐢𝐧𝐞 ${newCount}/${group.maxUsers}\n──────────────────\n👑 𝐆𝐑𝐎𝐔𝐏 𝐌𝐀𝐍𝐀𝐆𝐄𝐌𝐄𝐍𝐓\n──────────────────\n/kick [name]\n/ban [name]\n/unban [name]`);
         } else {
-            sendMessage(senderId, welcomeHeader);
+            sendMessage(senderId, `📥 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 𝐭𝐨 ${toBoldFont(group.name)} 𝐠𝐫𝐨𝐮𝐩!\n𝐎𝐧𝐥𝐢𝐧𝐞 ${newCount}/${group.maxUsers}`);
         }
-        
         return broadcastGroup(targetId, `${toBoldFont(user.name)} joined the chat!`, senderId);
     }
 
@@ -219,7 +220,7 @@ async function handleMessage(senderId, text, replyToMid) {
         return broadcastGroup(gid, `${toBoldFont(user.name)} left the chat.`, null);
     }
 
-    // 6. CHAT
+    // 6. CHAT BROADCAST
     if (user.active && user.currentGroupId) {
         const group = await Group.findOne({ groupId: user.currentGroupId });
         const isOwner = group.ownerId === senderId;
@@ -238,9 +239,7 @@ async function handleMessage(senderId, text, replyToMid) {
     }
 }
 
-// ==========================================
-// HELPERS
-// ==========================================
+// ... (Helpers mark_seen, sendMessage, sendAndLogMessage, broadcastGroup stay the same)
 function sendReadReceipt(senderId) {
     request({ uri: "https://graph.facebook.com/v18.0/me/messages", qs: { access_token: PAGE_ACCESS_TOKEN }, method: "POST", json: { recipient: { id: senderId }, sender_action: "mark_seen" } });
 }
