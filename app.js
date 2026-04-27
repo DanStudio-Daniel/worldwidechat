@@ -24,9 +24,21 @@ mongoose.connect(mongoURI, { dbName: "strangerchat" })
 const userSchema = new mongoose.Schema({
     senderId: { type: String, required: true, unique: true },
     name: { type: String, required: true },
-    active: { type: Boolean, default: false }
+    active: { type: Boolean, default: false },
+    currentGroupId: { type: String, default: null },
+    setupState: { type: String, default: null },
+    tempGroupData: { type: Object, default: {} }
 });
 const User = mongoose.model("globalusers", userSchema);
+
+const groupSchema = new mongoose.Schema({
+    groupId: { type: String, required: true, unique: true },
+    ownerId: { type: String, required: true },
+    name: { type: String, required: true },
+    visibility: { type: String, enum: ['public', 'private'], default: 'public' },
+    maxUsers: { type: Number, default: 100 }
+});
+const Group = mongoose.model("groups", groupSchema);
 
 const messageSchema = new mongoose.Schema({
     mid: { type: String, required: true, unique: true },
@@ -53,9 +65,7 @@ function toBoldFont(text) {
 app.get("/webhook", (req, res) => {
     if (req.query["hub.mode"] && req.query["hub.verify_token"] === VERIFY_TOKEN) {
         res.status(200).send(req.query["hub.challenge"]);
-    } else {
-        res.sendStatus(403);
-    }
+    } else { res.sendStatus(403); }
 });
 
 app.post("/webhook", (req, res) => {
@@ -64,23 +74,13 @@ app.post("/webhook", (req, res) => {
         body.entry.forEach(entry => {
             const webhookEvent = entry.messaging[0];
             const senderId = webhookEvent.sender.id;
-            
             sendReadReceipt(senderId);
-
             const messageText = webhookEvent.message?.text;
-            let replyToMid = null;
-            if (webhookEvent.message && webhookEvent.message.reply_to) {
-                replyToMid = webhookEvent.message.reply_to.mid;
-            }
-
-            if (messageText) {
-                handleMessage(senderId, messageText, replyToMid);
-            }
+            let replyToMid = webhookEvent.message?.reply_to?.mid || null;
+            if (messageText) { handleMessage(senderId, messageText, replyToMid); }
         });
         res.status(200).send("EVENT_RECEIVED");
-    } else {
-        res.sendStatus(404);
-    }
+    } else { res.sendStatus(404); }
 });
 
 // ==========================================
@@ -88,119 +88,131 @@ app.post("/webhook", (req, res) => {
 // ==========================================
 async function handleMessage(senderId, text, replyToMid) {
     const lowerText = text.toLowerCase().trim();
-    // Regex: Only allows A-Z, a-z, and 0-9
     const alphaNumeric = /^[a-zA-Z0-9]+$/;
 
-    // 1. REGISTER COMMAND
+    // 1. REGISTRATION
     if (lowerText.startsWith("/register")) {
         const name = text.slice(10).trim();
         if (!name) return sendMessage(senderId, "⚠️ 𝐏𝐥𝐞𝐚𝐬𝐞 𝐞𝐧𝐭𝐞𝐫 𝐚 𝐧𝐚𝐦𝐞!\nExample: /register Azuki");
-        if (!alphaNumeric.test(name)) return sendMessage(senderId, "❌ 𝐒𝐲𝐦𝐛𝐨𝐥𝐬 𝐧𝐨𝐭 𝐚𝐥𝐥𝐨𝐰𝐞𝐝!\nUse only letters and numbers.");
-        if (name.length < 2 || name.length > 10) return sendMessage(senderId, "❌ 𝐈𝐧𝐯𝐚𝐥𝐢𝐝 𝐍𝐚𝐦𝐞!\nUse 2-10 characters only.");
-
-        try {
-            const existingUser = await User.findOne({ senderId });
-            if (existingUser) return sendMessage(senderId, "✅ 𝐘𝐨𝐮 𝐚𝐫𝐞 𝐚𝐥𝐫𝐞𝐚𝐝𝐲 𝐫𝐞𝐠𝐢𝐬𝐭𝐞𝐫𝐞𝐝 𝐚𝐬\n" + toBoldFont(existingUser.name));
-
-            const nameTaken = await User.findOne({ name: name });
-            if (nameTaken) return sendMessage(senderId, "❌ 𝐒𝐨𝐫𝐫𝐲!\nName " + toBoldFont(name) + " is already taken.");
-
-            await new User({ senderId, name }).save();
-            sendMessage(senderId, "╔══════════════════╗\n    🎉 𝐖𝐄𝐋𝐂𝐎𝐌𝐄 🎉\n╚══════════════════╝\n\n𝐇𝐞𝐥𝐥𝐨 " + toBoldFont(name) + "!\n\n📌 𝐂𝐨𝐦𝐦𝐚𝐧𝐝𝐬:\n✏️ /changename <name>\n📥 join\n📤 leave\n\n✅ 𝐘𝐨𝐮 𝐜𝐚𝐧 𝐜𝐡𝐚𝐧𝐠𝐞 𝐧𝐚𝐦𝐞 𝐚𝐧𝐲𝐭𝐢𝐦𝐞!\n\n𝐓𝐲𝐩𝐞 '𝐣𝐨𝐢𝐧' 𝐭𝐨 𝐞𝐧𝐭𝐞𝐫 𝐜𝐡𝐚𝐭.");
-        } catch (err) { sendMessage(senderId, "❌ Error registering."); }
-        return;
+        if (!alphaNumeric.test(name)) return sendMessage(senderId, "❌ 𝐒𝐲𝐦𝐛𝐨𝐥𝐬 𝐧𝐨𝐭 𝐚𝐥𝐥𝐨𝐰𝐞𝐝!");
+        
+        const existing = await User.findOne({ senderId });
+        if (existing) return sendMessage(senderId, "✅ 𝐀𝐥𝐫𝐞𝐚𝐝𝐲 𝐫𝐞𝐠𝐢𝐬𝐭𝐞𝐫𝐞𝐝: " + toBoldFont(existing.name));
+        
+        await new User({ senderId, name }).save();
+        return sendMessage(senderId, "──────────────────\n    🎉 𝐖𝐄𝐋𝐂𝐎𝐌𝐄 🎉\n──────────────────\n\n𝐇𝐞𝐥𝐥𝐨 " + toBoldFont(name) + "!\n\n/changename\ncreategroup\njoin");
     }
 
     const user = await User.findOne({ senderId });
-    if (!user) return sendMessage(senderId, "👋 𝐇𝐞𝐥𝐥𝐨! 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 𝐭𝐨 𝐆𝐥𝐨𝐛𝐚𝐥 𝐂𝐡𝐚𝐭!\n\n📝 𝐓𝐲𝐩𝐞: /register YourName");
+    if (!user) return sendMessage(senderId, "👋 Type: /register YourName");
 
-    // 2. CHANGE NAME COMMAND
+    // 2. CHANGE NAME
     if (lowerText.startsWith("/changename")) {
         const newName = text.slice(12).trim();
-        if (!newName) return sendMessage(senderId, "⚠️ 𝐏𝐥𝐞𝐚𝐬𝐞 𝐞𝐧𝐭𝐞𝐫 𝐲𝐨𝐮𝐫 𝐧𝐞𝐰 𝐮𝐬𝐞𝐫𝐧𝐚𝐦𝐞!\nExample: /changename NewName");
-        if (!alphaNumeric.test(newName)) return sendMessage(senderId, "❌ 𝐒𝐲𝐦𝐛𝐨𝐥𝐬 𝐧𝐨𝐭 𝐚𝐥𝐥𝐨𝐰𝐞𝐝!\nUse only letters and numbers.");
-        if (newName.length < 2 || newName.length > 10) return sendMessage(senderId, "❌ 𝐈𝐧𝐯𝐚𝐥𝐢𝐝 𝐍𝐚𝐦𝐞!\nUse 2-10 characters only.");
+        if (!newName) return sendMessage(senderId, "⚠️ 𝐏𝐥𝐞𝐚𝐬𝐞 𝐞𝐧𝐭𝐞𝐫 𝐧𝐞𝐰 𝐮𝐬𝐞𝐫𝐧𝐚𝐦𝐞!");
+        if (!alphaNumeric.test(newName)) return sendMessage(senderId, "❌ 𝐒𝐲𝐦𝐛𝐨𝐥𝐬 𝐧𝐨𝐭 𝐚𝐥𝐥𝐨𝐰𝐞𝐝!");
 
-        try {
-            const nameTaken = await User.findOne({ name: newName });
-            if (nameTaken) return sendMessage(senderId, "❌ 𝐒𝐨𝐫𝐫𝐲!\nName " + toBoldFont(newName) + " is already taken.");
+        const nameTaken = await User.findOne({ name: newName });
+        if (nameTaken) return sendMessage(senderId, "❌ 𝐍𝐚𝐦𝐞 𝐭𝐚𝐤𝐞𝐧!");
 
-            await User.updateOne({ senderId }, { name: newName });
-            sendMessage(senderId, "✅ 𝐍𝐚𝐦𝐞 𝐮𝐩𝐝𝐚𝐭𝐞𝐝 𝐭𝐨\n" + toBoldFont(newName));
-        } catch (err) { sendMessage(senderId, "❌ Error changing name."); }
-        return;
+        await User.updateOne({ senderId }, { name: newName });
+        return sendMessage(senderId, "✅ 𝐍𝐚𝐦𝐞 𝐮𝐩𝐝𝐚𝐭𝐞𝐝: " + toBoldFont(newName));
     }
 
-    // 3. JOIN COMMAND
-    if (lowerText === "join") {
-        if (user.active) return sendMessage(senderId, "ℹ️ 𝐘𝐨𝐮 𝐚𝐫𝐞 𝐚𝐥𝐫𝐞𝐚𝐝𝐲 𝐢𝐧 𝐭𝐡𝐞 𝐜𝐡𝐚𝐭!");
-        await User.updateOne({ senderId }, { active: true });
-        sendMessage(senderId, "📥 𝐉𝐨𝐢𝐧𝐞𝐝 𝐬𝐮𝐜𝐜𝐞𝐬𝐬𝐟𝐮𝐥𝐥𝐲!");
-        return broadcastSystem(toBoldFont(user.name) + " joined the chat. ✅");
-    }
-
-    // 4. LEAVE COMMAND
-    if (lowerText === "leave") {
-        if (!user.active) return sendMessage(senderId, "ℹ️ 𝐘𝐨𝐮 𝐚𝐫𝐞 𝐧𝐨𝐭 𝐢𝐧 𝐭𝐡𝐞 𝐜𝐡𝐚𝐭.");
-        await User.updateOne({ senderId }, { active: false });
-        sendMessage(senderId, "📤 𝐋𝐞𝐟𝐭 𝐭𝐡𝐞 𝐜𝐡𝐚𝐭.");
-        return broadcastSystem(toBoldFont(user.name) + " left the chat. ❌");
-    }
-
-    // 5. GLOBAL CHAT
-    if (user.active) {
-        let header = toBoldFont(user.name);
-        if (replyToMid) {
-            const originalMsg = await MessageLog.findOne({ mid: replyToMid });
-            header = originalMsg ? `${toBoldFont(user.name)} replied to ${toBoldFont(originalMsg.senderName)}` : `${toBoldFont(user.name)} replied to System`;
+    // 3. GROUP CREATION
+    if (lowerText === "creategroup" || user.setupState) {
+        if (lowerText === "creategroup") {
+            const oldGroup = await Group.findOne({ ownerId: senderId });
+            if (oldGroup) {
+                await Group.deleteOne({ groupId: oldGroup.groupId });
+                await User.updateMany({ currentGroupId: oldGroup.groupId }, { currentGroupId: null, active: false });
+            }
+            await User.updateOne({ senderId }, { setupState: "WAITING_NAME", tempGroupData: {} });
+            return sendMessage(senderId, "──────────────────\n   🆕 𝐂𝐑𝐄𝐀𝐓𝐄 𝐆𝐑𝐎𝐔𝐏\n──────────────────\n\n𝐏𝐥𝐞𝐚𝐬𝐞 𝐞𝐧𝐭𝐞𝐫 𝐠𝐫𝐨𝐮𝐩 𝐧𝐚𝐦𝐞:");
         }
 
+        if (user.setupState === "WAITING_NAME") {
+            if (!alphaNumeric.test(text)) return sendMessage(senderId, "❌ 𝐋𝐞𝐭𝐭𝐞𝐫𝐬 𝐚𝐧𝐝 𝐧𝐮𝐦𝐛𝐞𝐫𝐬 𝐨𝐧𝐥𝐲!");
+            if (text.length < 2 || text.length > 20) return sendMessage(senderId, "❌ Use 2-20 characters.");
+            await User.updateOne({ senderId }, { setupState: "WAITING_VIS", "tempGroupData.name": text });
+            return sendMessage(senderId, "👁️ 𝐕𝐢𝐬𝐢𝐛𝐢𝐥𝐢𝐭𝐲: (public / private)");
+        }
+
+        if (user.setupState === "WAITING_VIS") {
+            if (lowerText !== "private" && lowerText !== "public") return sendMessage(senderId, "❌ Type 'private' or 'public'.");
+            await User.updateOne({ senderId }, { setupState: "WAITING_MAX", "tempGroupData.visibility": lowerText });
+            return sendMessage(senderId, "👥 𝐌𝐚𝐱 𝐮𝐬𝐞𝐫𝐬: (min 100)");
+        }
+
+        if (user.setupState === "WAITING_MAX") {
+            const max = parseInt(text);
+            if (isNaN(max) || max < 100) return sendMessage(senderId, "❌ Minimum 100.");
+            let newId = Math.floor(10000 + Math.random() * 90000).toString();
+
+            const newGroup = new Group({ groupId: newId, ownerId: senderId, name: user.tempGroupData.name, visibility: user.tempGroupData.visibility, maxUsers: max });
+            await newGroup.save();
+            await User.updateOne({ senderId }, { setupState: null, tempGroupData: {}, currentGroupId: newId, active: true });
+            return sendMessage(senderId, `──────────────────\n   ✅ 𝐆𝐑𝐎𝐔𝐏 𝐑𝐄𝐀𝐃𝐘\n──────────────────\n\n𝐍𝐚𝐦𝐞: ${toBoldFont(newGroup.name)}\n𝐈𝐃: ${newId}`);
+        }
+    }
+
+    // 4. JOIN/LEAVE
+    if (lowerText === "join" || lowerText.startsWith("join ")) {
+        if (lowerText === "join") {
+            const publics = await Group.find({ visibility: "public" });
+            let list = "📂 𝐏𝐮𝐛𝐥𝐢𝐜 𝐆𝐫𝐨𝐮𝐩𝐬:\n";
+            publics.forEach(g => list += `• ${toBoldFont(g.name)} - ${g.groupId}\n`);
+            return sendMessage(senderId, list + "\nType: join [id]");
+        }
+        const targetId = text.split(" ")[1];
+        const group = await Group.findOne({ groupId: targetId });
+        if (!group) return sendMessage(senderId, "❌ ID not found.");
+        
+        await User.updateOne({ senderId }, { currentGroupId: targetId, active: true });
+        sendMessage(senderId, `📥 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 𝐭𝐨 ${toBoldFont(group.name)} 𝐠𝐫𝐨𝐮𝐩!`);
+        return broadcastGroup(targetId, `${toBoldFont(user.name)} joined the chat!`, senderId);
+    }
+
+    if (lowerText === "leave") {
+        if (!user.currentGroupId) return sendMessage(senderId, "ℹ️ No group.");
+        const gid = user.currentGroupId;
+        await User.updateOne({ senderId }, { currentGroupId: null, active: false });
+        sendMessage(senderId, "📤 Left the group.");
+        return broadcastGroup(gid, `${toBoldFont(user.name)} left the chat.`, null);
+    }
+
+    // 5. CHAT / TIP LOGIC
+    if (user.active && user.currentGroupId) {
+        let header = toBoldFont(user.name);
+        if (replyToMid) {
+            const original = await MessageLog.findOne({ mid: replyToMid });
+            header = original ? `${toBoldFont(user.name)} replied to ${toBoldFont(original.senderName)}` : `${toBoldFont(user.name)} replied to System`;
+        }
         const output = `${header}\n${text}`;
-        const activeUsers = await User.find({ active: true, senderId: { $ne: senderId } });
-        activeUsers.forEach(u => sendAndLogMessage(u.senderId, output, user.name));
-    } else {
-        sendMessage(senderId, "🔒 𝐘𝐨𝐮 𝐚𝐫𝐞 𝐧𝐨𝐭 𝐢𝐧 𝐭𝐡𝐞 𝐜𝐡𝐚𝐭.\n𝐓𝐲𝐩𝐞 '𝐣𝐨𝐢𝐧' 𝐭𝐨 𝐩𝐚𝐫𝐭𝐢𝐜𝐢𝐩𝐚𝐭𝐞.");
+        const members = await User.find({ currentGroupId: user.currentGroupId, senderId: { $ne: senderId } });
+        members.forEach(m => sendAndLogMessage(m.senderId, output, user.name));
+    } else if (!user.setupState) {
+        // Updated Tip Logic
+        sendMessage(senderId, "──────────────────\n         💡 𝐓𝐈𝐏\n──────────────────\n\n𝐍𝐨𝐭 𝐢𝐧 𝐚 𝐠𝐫𝐨𝐮𝐩! 𝐓𝐲𝐩𝐞 '𝐣𝐨𝐢𝐧' 𝐭𝐨 𝐬𝐞𝐞 𝐚𝐯𝐚𝐢𝐥𝐚𝐛𝐥𝐞 𝐠𝐫𝐨𝐮𝐩𝐬\n\n𝐎𝐫 𝐜𝐫𝐞𝐚𝐭𝐞 𝐲𝐨𝐮𝐫 𝐨𝐰𝐧 𝐠𝐫𝐨𝐮𝐩 𝐣𝐮𝐬𝐭 𝐭𝐲𝐩𝐞 '𝐜𝐫𝐞𝐚𝐭𝐞𝐠𝐫𝐨𝐮𝐩'");
     }
 }
 
 // ==========================================
 // HELPERS
 // ==========================================
-
 function sendReadReceipt(senderId) {
-    request({
-        uri: "https://graph.facebook.com/v18.0/me/messages",
-        qs: { access_token: PAGE_ACCESS_TOKEN },
-        method: "POST",
-        json: { recipient: { id: senderId }, sender_action: "mark_seen" }
-    });
+    request({ uri: "https://graph.facebook.com/v18.0/me/messages", qs: { access_token: PAGE_ACCESS_TOKEN }, method: "POST", json: { recipient: { id: senderId }, sender_action: "mark_seen" } });
 }
-
 function sendMessage(senderId, text) {
-    request({
-        uri: "https://graph.facebook.com/v18.0/me/messages",
-        qs: { access_token: PAGE_ACCESS_TOKEN },
-        method: "POST",
-        json: { recipient: { id: senderId }, message: { text: text } }
-    });
+    request({ uri: "https://graph.facebook.com/v18.0/me/messages", qs: { access_token: PAGE_ACCESS_TOKEN }, method: "POST", json: { recipient: { id: senderId }, message: { text: text } } });
+}
+function sendAndLogMessage(recipientId, text, senderName) {
+    request({ uri: "https://graph.facebook.com/v18.0/me/messages", qs: { access_token: PAGE_ACCESS_TOKEN }, method: "POST", json: { recipient: { id: recipientId }, message: { text: text } } }, 
+    async (err, res, body) => { if (body?.message_id) await new MessageLog({ mid: body.message_id, senderName }).save(); });
+}
+async function broadcastGroup(groupId, text, skipId) {
+    const members = await User.find({ currentGroupId: groupId });
+    members.forEach(m => { if (m.senderId !== skipId) sendMessage(m.senderId, text); });
 }
 
-function sendAndLogMessage(recipientId, text, senderNameForLog) {
-    request({
-        uri: "https://graph.facebook.com/v18.0/me/messages",
-        qs: { access_token: PAGE_ACCESS_TOKEN },
-        method: "POST",
-        json: { recipient: { id: recipientId }, message: { text: text } }
-    }, async (error, res, body) => {
-        if (!error && body.message_id) {
-            await new MessageLog({ mid: body.message_id, senderName: senderNameForLog }).save();
-        }
-    });
-}
-
-async function broadcastSystem(text) {
-    const activeUsers = await User.find({ active: true });
-    activeUsers.forEach(u => sendMessage(u.senderId, text));
-}
-
-app.listen(process.env.PORT || 3000, () => console.log("Server Running 🚀"));
+app.listen(process.env.PORT || 3000);
